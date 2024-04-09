@@ -63,10 +63,19 @@ resource "aws_instance" "example" {
   key_name      = aws_key_pair.generated_key.key_name
   vpc_security_group_ids = [aws_security_group.security.id]
 
-  user_data = file("${path.module}/setup_node.sh")
+  user_data = <<EOF
+#!/bin/bash
 
+touch ~/.bashrc
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash
+source ~/.bashrc
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+nvm install --lts
+
+EOF
   tags = {
-    Name = "example-instance"
+    Name = "instant-bench"
   }
   # this copies the files in the ec2_files/ directory to /home/ec2-user on the instance
   provisioner "file" {
@@ -84,7 +93,7 @@ resource "aws_instance" "example" {
 
   provisioner "remote-exec" {
     inline = [
-      "ls -ls /home/ubuntu",
+      "nvm -v",
     ]
   }
 }
