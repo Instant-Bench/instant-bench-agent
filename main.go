@@ -94,7 +94,8 @@ func main() {
 	// Run 'terraform apply' in the given directory
 	err = terraform.Apply(context.Background(), tfexec.Var("benchmark_folder="+fullTempFolder), tfexec.Var("instance_type=t2.micro"))
 	if err != nil {
-		fmt.Printf("Error running terraform apply: %s\n", err)
+		fmt.Println("Error running terraform apply: %s.\n" +
+			"⚠️  Although, an error ocurred while running terraform apply, resources might have been created! Ensure to run terraform destroy inside " + terraformDir)
 		os.Exit(1)
 	}
 	fmt.Println("Terraform apply completed successfully.")
