@@ -1,0 +1,25 @@
+lockfileVersion: '6.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+dependencies:
+  which:
+    specifier: ^4.0.0
+    version: 4.0.0
+
+packages:
+
+  /isexe@3.1.1:
+    resolution: {integrity: sha512-LpB/54B+/2J5hqQ7imZHfdU31OlgQqx7ZicVlkm9kzg9/w8GKLEcFfJl/t7DCEDueOyBAD6zCCwTO6Fzs0NoEQ==}
+    engines: {node: '>=16'}
+    dev: false
+
+  /which@4.0.0:
+    resolution: {integrity: sha512-GlaYyEb07DPxYCKhKzplCWBJtvxZcZMrL+4UkrTSJHHPyZU4mYYTv3qaOe77H7EODLSSopAUFAc6W8U4yqvscg==}
+    engines: {node: ^16.13.0 || >=18.0.0}
+    hasBin: true
+    dependencies:
+      isexe: 3.1.1
+    dev: false

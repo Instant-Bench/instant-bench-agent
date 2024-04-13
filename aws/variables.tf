@@ -5,5 +5,5 @@ variable "instance_type" {
 
 variable "benchmark_folder" {
   type        = string
-  description = "The folder with a index.js to run"
+  description = "The folder with a ./node & index.js to run"
 }

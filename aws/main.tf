@@ -63,17 +63,6 @@ resource "aws_instance" "example" {
   key_name      = aws_key_pair.generated_key.key_name
   vpc_security_group_ids = [aws_security_group.security.id]
 
-  user_data = <<EOF
-#!/bin/bash
-
-touch ~/.bashrc
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash
-source ~/.bashrc
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-nvm install --lts
-
-EOF
   tags = {
     Name = "instant-bench"
   }
@@ -91,9 +80,18 @@ EOF
     host        = self.public_ip
   }
 
+  user_data = <<-EOT
+    #!/bin/sh
+
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash
+    source ~/.bashrc
+    nvm install --lts
+  EOT
+
   provisioner "remote-exec" {
     inline = [
-      "nvm -v",
+      "cd /home/ubuntu",
+      "./node index.js"
     ]
   }
 }
