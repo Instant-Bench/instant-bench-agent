@@ -31,11 +31,13 @@ func main() {
 	binaryPath, err := exec.LookPath(binary)
 	if err != nil {
 		log.Fatalf("Binary %s not found in PATH", binary)
+		os.Exit(1)
 	}
 
 	entrypointPath, err := filepath.Abs(entrypoint)
 	if err != nil {
 		log.Fatalf("Failed to get absolute path for entrypoint %s", entrypoint)
+		os.Exit(1)
 	}
 
 	tmpFolder, err := os.MkdirTemp(".", ".ib-")
@@ -84,11 +86,13 @@ func main() {
 	err = terraform.Init(context.Background(), tfexec.Upgrade(true))
 	if err != nil {
 		log.Fatalf("error running Init: %s", err)
+		os.Exit(1)
 	}
 
 	_, err = terraform.Show(context.Background())
 	if err != nil {
 		log.Fatalf("error running Show: %s", err)
+		os.Exit(1)
 	}
 
 	// Run 'terraform apply' in the given directory
