@@ -1,4 +1,4 @@
-module instant-bench
+module ib-agent-cli
 
 go 1.22.2
 
