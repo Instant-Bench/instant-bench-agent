@@ -38,7 +38,7 @@ func main() {
 		log.Fatalf("Failed to get absolute path for entrypoint %s", entrypoint)
 	}
 
-	tmpFolder, err := os.MkdirTemp(".", ".ib")
+	tmpFolder, err := os.MkdirTemp(".", ".ib-")
 	fmt.Printf("Created benchmark folder %s\n", tmpFolder)
 	if err != nil {
 		log.Fatalf("Failed to create temporary folder: %v", err)
