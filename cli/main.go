@@ -54,7 +54,7 @@ func main() {
 	}
 
 	// Path to the directory containing Terraform configuration files
-	terraformDir, err := filepath.Abs("./aws")
+	terraformDir, err := filepath.Abs("../aws")
 	if err != nil {
 		log.Fatalf("Failed to resolve aws folder: %v", err)
 		os.Exit(1)
@@ -98,8 +98,9 @@ func main() {
 	// Run 'terraform apply' in the given directory
 	err = terraform.Apply(context.Background(), tfexec.Var("benchmark_folder="+fullTempFolder), tfexec.Var("instance_type=t2.micro"))
 	if err != nil {
-		fmt.Println("Error running terraform apply: %s.\n" +
-			"⚠️  Although, an error ocurred while running terraform apply, resources might have been created! Ensure to run terraform destroy inside " + terraformDir)
+		fmt.Printf("Error running terraform apply: %s.\n" +
+		"⚠️  Although, an error ocurred while running terraform apply, resources might have been created! Ensure to run:\n" +
+		"cd %s && terraform destroy\n", err, terraformDir)
 		os.Exit(1)
 	}
 	fmt.Println("Terraform apply completed successfully.")
