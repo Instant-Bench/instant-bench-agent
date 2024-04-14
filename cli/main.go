@@ -33,11 +33,20 @@ func main() {
 		log.Fatalf("Binary %s not found in PATH", binary)
 		os.Exit(1)
 	}
+	entrypointPath := entrypoint
 
-	entrypointPath, err := filepath.Abs(entrypoint)
-	if err != nil {
-		log.Fatalf("Failed to get absolute path for entrypoint %s", entrypoint)
-		os.Exit(1)
+	if (!filepath.IsAbs(entrypoint)) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			log.Println("Failed to get working directory")
+			os.Exit(1)
+		}
+
+		entrypointPath, err = filepath.Abs(filepath.Join(cwd, entrypoint))
+		if err != nil {
+			log.Fatalf("Failed to get absolute path for entrypoint %s", entrypoint)
+			os.Exit(1)
+		}
 	}
 
 	tmpFolder, err := os.MkdirTemp(".", ".ib-")
@@ -82,6 +91,8 @@ func main() {
 		fmt.Printf("Error initializing Terraform: %s\n", err)
 		os.Exit(1)
 	}
+	terraform.SetStdout(os.Stdout)
+	terraform.SetStderr(os.Stderr)
 
 	err = terraform.Init(context.Background(), tfexec.Upgrade(true))
 	if err != nil {
