@@ -62,14 +62,16 @@ resource "aws_instance" "example" {
   instance_type = var.instance_type
   key_name      = aws_key_pair.generated_key.key_name
   vpc_security_group_ids = [aws_security_group.security.id]
+  associate_public_ip_address = true
 
   tags = {
     Name = "instant-bench"
   }
+
   # this copies the files in the ec2_files/ directory to /home/ec2-user on the instance
   provisioner "file" {
     source      = var.benchmark_folder
-    destination = "/home/ubuntu"
+    destination = "/home/ubuntu/benchmark"
   }
 
   # this is required to establish a connection and to copy files to the EC2 instance id from local disk
@@ -80,18 +82,10 @@ resource "aws_instance" "example" {
     host        = self.public_ip
   }
 
-  user_data = <<-EOT
-    #!/bin/sh
-
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash
-    source ~/.bashrc
-    nvm install --lts
-  EOT
-
   provisioner "remote-exec" {
     inline = [
-      "cd /home/ubuntu",
-      "./node index.js"
+      "cd /home/ubuntu/benchmark",
+      "./node bench.js"
     ]
   }
 }

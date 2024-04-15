@@ -33,8 +33,8 @@ func main() {
 		log.Fatalf("Binary %s not found in PATH", binary)
 		os.Exit(1)
 	}
-	entrypointPath := entrypoint
 
+	entrypointPath := entrypoint
 	if (!filepath.IsAbs(entrypoint)) {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -58,8 +58,16 @@ func main() {
 	if *copyFS {
 		// Implement copying filesystem if required
 	} else {
-		copyFile(binaryPath, filepath.Join(tmpFolder, filepath.Base(binaryPath)))
+		binaryFullPath := filepath.Join(tmpFolder, filepath.Base(binaryPath))
+		copyFile(binaryPath, binaryFullPath)
 		copyFile(entrypointPath, filepath.Join(tmpFolder, filepath.Base(entrypointPath)))
+
+		// TODO: this is not working
+		err := os.Chmod(tmpFolder, 0755)
+		if err != nil {
+			log.Fatalf("Failed to chmod binary: %v", err)
+			os.Exit(1)
+		}
 	}
 
 	// Path to the directory containing Terraform configuration files
@@ -77,7 +85,7 @@ func main() {
 
 	installer := &releases.ExactVersion{
 		Product: product.Terraform,
-		Version: version.Must(version.NewVersion("1.0.6")),
+		Version: version.Must(version.NewVersion("1.7.5")),
 	}
 
 	execPath, err := installer.Install(context.Background())
@@ -91,8 +99,6 @@ func main() {
 		fmt.Printf("Error initializing Terraform: %s\n", err)
 		os.Exit(1)
 	}
-	terraform.SetStdout(os.Stdout)
-	terraform.SetStderr(os.Stderr)
 
 	err = terraform.Init(context.Background(), tfexec.Upgrade(true))
 	if err != nil {
@@ -106,6 +112,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	terraform.SetStdout(os.Stdout)
+	terraform.SetStderr(os.Stderr)
 	// Run 'terraform apply' in the given directory
 	err = terraform.Apply(context.Background(), tfexec.Var("benchmark_folder="+fullTempFolder), tfexec.Var("instance_type=t2.micro"))
 	if err != nil {
@@ -115,6 +123,21 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("Terraform apply completed successfully.")
+
+	err = terraform.Destroy(context.Background(), tfexec.Var("benchmark_folder="+fullTempFolder), tfexec.Var("instance_type=t2.micro"))
+	if err != nil {
+		fmt.Printf("Error running terraform destroy: %s.\n" +
+		"⚠️  Although, an error ocurred while running terraform destroy, resources might have been created! Ensure to run:\n" +
+		"cd %s && terraform destroy\n", err, terraformDir)
+		os.Exit(1)
+	}
+	fmt.Println("Terraform destroy completed successfully.")
+
+	err = os.RemoveAll(fullTempFolder)
+	if err != nil {
+		fmt.Printf("An error ocurred when removing the temporary folder: %s. Error: %s", fullTempFolder, err)
+		os.Exit(1)
+	}
 }
 
 func printUsageAndExit() {
@@ -138,4 +161,5 @@ func copyFile(src, dst string) {
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		log.Fatalf("Failed to copy data from %s to %s: %v", src, dst, err)
 	}
+
 }
