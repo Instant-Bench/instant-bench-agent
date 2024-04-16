@@ -7,6 +7,14 @@ An agent that receives commands via IPC/CLI/HTTP and runs the given script on ei
 
 And pipe the output to the communication socket.
 
+## Install
+
+```console
+$ sudo make install
+Building ib-agent-cli...
+Installing ib-agent-cli to /usr/local/bin...
+```
+
 ## CLI
 
 Currently, this agent supports only CLI commands through a `golang` script.
@@ -18,9 +26,7 @@ The CLI receives two positional arguments:
 * $ENTRYPOINT - The benchmark script.
 
 ```console
-$ export BINARY=node
-$ export ENTRYPOINT=bench.js
-$ go run main.go $BINARY $ENTRYPOINT
+$ ib-agent-cli node ./bench.js
 ```
 
 **Important**: In case of failures, remember to `terraform destroy` inside `aws` folder.
