@@ -35,7 +35,7 @@ func main() {
 	}
 
 	entrypointPath := entrypoint
-	if (!filepath.IsAbs(entrypoint)) {
+	if !filepath.IsAbs(entrypoint) {
 		cwd, err := os.Getwd()
 		if err != nil {
 			log.Println("Failed to get working directory")
@@ -117,18 +117,18 @@ func main() {
 	// Run 'terraform apply' in the given directory
 	err = terraform.Apply(context.Background(), tfexec.Var("benchmark_folder="+fullTempFolder), tfexec.Var("instance_type=t2.micro"))
 	if err != nil {
-		fmt.Printf("Error running terraform apply: %s.\n" +
-		"⚠️  Although, an error ocurred while running terraform apply, resources might have been created! Ensure to run:\n" +
-		"cd %s && terraform destroy\n", err, terraformDir)
+		fmt.Printf("Error running terraform apply: %s.\n"+
+			"⚠️  Although, an error ocurred while running terraform apply, resources might have been created! Ensure to run:\n"+
+			"cd %s && terraform destroy\n", err, terraformDir)
 		os.Exit(1)
 	}
 	fmt.Println("Terraform apply completed successfully.")
 
 	err = terraform.Destroy(context.Background(), tfexec.Var("benchmark_folder="+fullTempFolder), tfexec.Var("instance_type=t2.micro"))
 	if err != nil {
-		fmt.Printf("Error running terraform destroy: %s.\n" +
-		"⚠️  Although, an error ocurred while running terraform destroy, resources might have been created! Ensure to run:\n" +
-		"cd %s && terraform destroy\n", err, terraformDir)
+		fmt.Printf("Error running terraform destroy: %s.\n"+
+			"⚠️  Although, an error ocurred while running terraform destroy, resources might have been created! Ensure to run:\n"+
+			"cd %s && terraform destroy\n", err, terraformDir)
 		os.Exit(1)
 	}
 	fmt.Println("Terraform destroy completed successfully.")
