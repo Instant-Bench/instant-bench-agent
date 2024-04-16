@@ -63,7 +63,7 @@ func main() {
 		copyFile(entrypointPath, filepath.Join(tmpFolder, filepath.Base(entrypointPath)))
 
 		// TODO: this is not working
-		err := os.Chmod(tmpFolder, 0755)
+		err := os.Chmod(binaryFullPath, 0755)
 		if err != nil {
 			log.Fatalf("Failed to chmod binary: %v", err)
 			os.Exit(1)
