@@ -124,6 +124,7 @@ func main() {
 	}
 	fmt.Println("Terraform apply completed successfully.")
 
+	// TODO: add schedule to destroy feature
 	err = terraform.Destroy(context.Background(), tfexec.Var("benchmark_folder="+fullTempFolder), tfexec.Var("instance_type=t2.micro"))
 	if err != nil {
 		fmt.Printf("Error running terraform destroy: %s.\n"+
