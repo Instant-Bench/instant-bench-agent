@@ -61,13 +61,6 @@ func main() {
 		binaryFullPath := filepath.Join(tmpFolder, filepath.Base(binaryPath))
 		copyFile(binaryPath, binaryFullPath)
 		copyFile(entrypointPath, filepath.Join(tmpFolder, filepath.Base(entrypointPath)))
-
-		// TODO: this is not working
-		err := os.Chmod(binaryFullPath, 0755)
-		if err != nil {
-			log.Fatalf("Failed to chmod binary: %v", err)
-			os.Exit(1)
-		}
 	}
 
 	// Path to the directory containing Terraform configuration files

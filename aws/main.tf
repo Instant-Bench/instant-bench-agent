@@ -85,6 +85,8 @@ resource "aws_instance" "example" {
   provisioner "remote-exec" {
     inline = [
       "cd /home/ubuntu/benchmark",
+      # TODO: use a generic name instead of "node"
+      "chmod +x ./node",
       "./node bench.js"
     ]
   }
