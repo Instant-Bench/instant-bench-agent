@@ -14,11 +14,11 @@ GLOBAL_BIN_PATH := /usr/local/bin
 
 build:
 	@echo "Building $(BINARY_NAME)..."
-	@cd $(SRC_DIR) && $(GO) build -o $(BINARY_NAME)
+	@cd $(SRC_DIR) && $(GO) mod download && $(GO) build -o $(BINARY_NAME) 
 
 install: build
 	@echo "Installing $(BINARY_NAME) to $(GLOBAL_BIN_PATH)..."
-	@mv $(SRC_DIR)/$(BINARY_NAME) $(GLOBAL_BIN_PATH)/$(BINARY_NAME)
+	@sudo mv $(SRC_DIR)/$(BINARY_NAME) $(GLOBAL_BIN_PATH)/$(BINARY_NAME)
 
 clean:
 	@echo "Cleaning up..."

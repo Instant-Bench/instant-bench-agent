@@ -5,7 +5,7 @@ The Instant Bench Agent is a versatile tool that executes commands received via 
 ## Installation
 
 ```console
-$ sudo make install
+$ make install
 Building ib-agent-cli...
 Installing ib-agent-cli to /usr/local/bin...
 ```
