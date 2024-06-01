@@ -56,7 +56,7 @@ func main() {
 	}
 
 	if *copyFS {
-		// Implement copying filesystem if required
+		// TODO: Implement copying filesystem if required
 	} else {
 		binaryFullPath := filepath.Join(tmpFolder, filepath.Base(binaryPath))
 		copyFile(binaryPath, binaryFullPath)
