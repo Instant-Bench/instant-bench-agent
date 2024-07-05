@@ -85,9 +85,13 @@ resource "aws_instance" "example" {
   provisioner "remote-exec" {
     inline = [
       "cd /home/ubuntu/benchmark",
-      # TODO: use a generic name instead of "node"
-      "chmod +x ./node",
-      "./node bench.js"
+
+      "git clone https://github.com/google/benchmark.git",
+      "cd benchmark",
+      "cmake -E make_directory \"build\"",
+      "cmake -E chdir \“build\” cmake -DBENCHMARK_DOWNLOAD_DEPENDENCIES=on -DCMAKE_BUILD_TYPE=Release ../",
+      "cmake — build “build” — config Release",
+      var.remove_script
     ]
   }
 }

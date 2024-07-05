@@ -18,6 +18,7 @@ import (
 
 func main() {
 	copyFS := flag.Bool("copy-fs", false, "Copy filesystem")
+	// compileCmd := flag.String("compile-cmd", "", "Compile command")
 	flag.Parse()
 
 	args := flag.Args()
