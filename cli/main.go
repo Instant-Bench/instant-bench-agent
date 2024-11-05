@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -15,6 +16,38 @@ import (
 	"github.com/hashicorp/hc-install/releases"
 	"github.com/hashicorp/terraform-exec/tfexec"
 )
+
+func filterOutput(output []byte) []byte {
+	lines := bytes.Split(output, []byte("\n"))
+	var filteredOutput []byte
+	for _, line := range lines {
+		if bytes.Contains(line, []byte("Remote-Output")) {
+			filteredOutput = append(filteredOutput, line...)
+			filteredOutput = append(filteredOutput, '\n')
+		}
+	}
+	return filteredOutput
+}
+
+var terraformPath string
+
+func getTerraformDir() string {
+    if terraformPath == "" {
+		terraformPath = "../aws"
+    }
+
+    // Ensure the path is absolute
+    absolutePath, err := filepath.Abs(terraformPath)
+    if err != nil {
+        log.Fatalf("Failed to resolve absolute path: %v", err)
+    }
+
+    if _, err := os.Stat(absolutePath); os.IsNotExist(err) {
+        log.Fatalf("Terraform directory does not exist: %s", absolutePath)
+    }
+
+    return absolutePath
+}
 
 func main() {
 	copyFS := flag.Bool("copy-fs", false, "Copy filesystem")
@@ -71,20 +104,13 @@ func main() {
 		// TODO: Implement copying filesystem if required
 	} else {
 		binaryFullPath := filepath.Join(tmpFolder, filepath.Base(binaryPath))
-		fmt.Printf("Copy... %s to %s\n", binaryPath, binaryFullPath)
 		copyFile(binaryPath, binaryFullPath)
 		if entrypointPath != "" {
 			copyFile(entrypointPath, filepath.Join(tmpFolder, filepath.Base(entrypointPath)))
 		}
 	}
 
-	// Path to the directory containing Terraform configuration files
-	terraformDir, err := filepath.Abs("../aws")
-	if err != nil {
-		log.Fatalf("Failed to resolve aws folder: %v", err)
-		os.Exit(1)
-	}
-
+	terraformDir := getTerraformDir()
 	fullTempFolder, err := filepath.Abs(tmpFolder)
 	if err != nil {
 		log.Fatalf("Failed to resolve temporary folder: %v", err)
@@ -120,16 +146,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	terraform.SetStdout(os.Stdout)
-	terraform.SetStderr(os.Stderr)
+	buffer := &bytes.Buffer{}
+	terraform.SetStdout(buffer)
+	terraform.SetStderr(buffer)
+	// terraform.SetStdout(os.Stdout)
+	// terraform.SetStderr(os.Stderr)
 
 	applyVars := []tfexec.ApplyOption{
 		tfexec.Var("benchmark_folder=" + fullTempFolder),
 		tfexec.Var("instance_type=t2.micro"),
 	}
 	if *command != "" {
-		applyVars = append(applyVars, tfexec.Var("custom_command="+*command))
+		applyVars = append(applyVars, tfexec.Var("custom_command=echo \"Remote-Output: $("+*command+")\""))
 	}
+	fmt.Println("Provisioning machine...")
 	// Run 'terraform apply' in the given directory
 	err = terraform.Apply(context.Background(), applyVars...)
 	if err != nil {
@@ -138,9 +168,11 @@ func main() {
 			"cd %s && terraform destroy\n", err, terraformDir)
 		os.Exit(1)
 	}
+	fmt.Println(string(filterOutput(buffer.Bytes())))
 	fmt.Println("Terraform apply completed successfully.")
 
 	// TODO: add schedule to destroy feature
+	fmt.Println("Destroying provisioned machine...")
 	err = terraform.Destroy(context.Background(), tfexec.Var("benchmark_folder=" + fullTempFolder),
 		tfexec.Var("instance_type=t2.micro"))
 	if err != nil {

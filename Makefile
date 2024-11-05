@@ -14,7 +14,10 @@ GLOBAL_BIN_PATH := /usr/local/bin
 
 build:
 	@echo "Building $(BINARY_NAME)..."
-	@cd $(SRC_DIR) && $(GO) mod download && $(GO) build -o $(BINARY_NAME) 
+	TERRAFORM_PATH=$(shell pwd)/aws && \
+	cd $(SRC_DIR) && \
+	$(GO) mod download && \
+	$(GO) build -ldflags "-X main.terraformPath=$$TERRAFORM_PATH" -o $(BINARY_NAME)
 
 install: build
 	@echo "Installing $(BINARY_NAME) to $(GLOBAL_BIN_PATH)..."

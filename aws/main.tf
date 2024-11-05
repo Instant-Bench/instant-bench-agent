@@ -85,14 +85,15 @@ resource "aws_instance" "example" {
   provisioner "remote-exec" {
     inline = [
       "cd /home/ubuntu/benchmark",
-      "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash",
-      ". ~/.nvm/nvm.sh",
-      "nvm install v22",
+      "curl -o- -s https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash > /dev/null 2>&1",
+      ". ~/.nvm/nvm.sh > /dev/null 2>&1",
+      "nvm install v22 > /dev/null 2>&1",
       var.custom_command
       # # TODO: use a generic name instead of "node"
       # "chmod +x ./node",
       # "./node bench.js"
     ]
+    on_failure = continue
   }
 }
 
