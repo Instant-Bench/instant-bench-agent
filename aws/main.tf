@@ -88,10 +88,10 @@ resource "aws_instance" "example" {
       "curl -o- -s https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash > /dev/null 2>&1",
       ". ~/.nvm/nvm.sh > /dev/null 2>&1",
       "nvm install v22 > /dev/null 2>&1",
+      # TODO: accept run times as argument
+      var.custom_command,
+      var.custom_command,
       var.custom_command
-      # # TODO: use a generic name instead of "node"
-      # "chmod +x ./node",
-      # "./node bench.js"
     ]
     on_failure = continue
   }
