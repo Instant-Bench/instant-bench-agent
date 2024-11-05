@@ -2,6 +2,9 @@
 
 The Instant Bench Agent is a versatile tool that executes commands received via IPC/CLI/HTTP and runs the provided script on either a fresh new dedicated instance or an already running dedicated instance. It then pipes the output back to the communication socket.
 
+> [!WARNING]
+> This tool is still in development phrase. No stable version was released yet.
+
 ## Installation
 
 ```console
