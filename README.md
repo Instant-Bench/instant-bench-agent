@@ -17,13 +17,19 @@ Installing ib-agent-cli to /usr/local/bin...
 
 Currently, this agent supports only CLI commands through a Go script. Therefore, having Go installed is required.
 
-The CLI requires two positional arguments:
+The CLI requires two positional arguments or two arguments (--command & --binary):
 
 * `$BINARY` - The binary to execute the entry point of your benchmark. For example, if you wish to benchmark a custom version of Node.js, provide the binary path like `./node` or simply `node` if using an official version available in `$PATH`.
 * `$ENTRYPOINT` - The benchmark script.
 
 ```console
 $ ib-agent-cli node ./bench.js
+```
+
+or
+
+```console
+$ ib-agent-cli --command='node bench.js' --binary='./bench.js'
 ```
 
 This command performs the following steps:
