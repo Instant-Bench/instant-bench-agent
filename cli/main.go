@@ -20,8 +20,29 @@ import (
 func filterOutput(output []byte) []byte {
 	lines := bytes.Split(output, []byte("\n"))
 	var filteredOutput []byte
+	captureOutput := false
 	for _, line := range lines {
-		if bytes.Contains(line, []byte("Remote-Output")) {
+
+		if bytes.Contains(line, []byte("BENCHMARK_START")) {
+			captureOutput = true
+			continue
+		}
+
+		if bytes.Contains(line, []byte("BENCHMARK_END")) {
+			captureOutput = false
+			continue
+		}
+
+		if bytes.Contains(line, []byte("Still creating")) {
+			continue
+		}
+
+		if captureOutput == true {
+			// Remove "Remote-Output:" prefix if present
+			if bytes.Contains(line, []byte("Remote-Output:")) {
+				line = bytes.Replace(line, []byte("Remote-Output:"), []byte(""), 1)
+			}
+			
 			filteredOutput = append(filteredOutput, line...)
 			filteredOutput = append(filteredOutput, '\n')
 		}

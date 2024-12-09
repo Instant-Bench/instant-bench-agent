@@ -89,9 +89,14 @@ resource "aws_instance" "example" {
       ". ~/.nvm/nvm.sh > /dev/null 2>&1",
       "nvm install v22 > /dev/null 2>&1",
       # TODO: accept run times as argument
+      "echo 'BENCHMARK_START'",
+      "echo 'Run 1'",
       var.custom_command,
+      "echo 'Run 2'",
       var.custom_command,
-      var.custom_command
+      "echo 'Run 3'",
+      var.custom_command,
+      "echo 'BENCHMARK_END'"
     ]
     on_failure = continue
   }
