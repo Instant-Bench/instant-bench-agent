@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hc-install/product"
@@ -132,12 +134,14 @@ func main() {
 	var binaryPath string
 	var cmdToRun string
 	var filesToCopy []string
+	var binariesToCopy []string
+	var cmdParts []string
 
 	if len(args) == 1 {
 		// Single positional argument is treated as a command
 		cmdToRun = args[0]
 		// Try to infer binary from command
-		cmdParts := strings.Fields(cmdToRun)
+		cmdParts = strings.Fields(cmdToRun)
 		if len(cmdParts) > 0 {
 			inferredBinary, err := exec.LookPath(cmdParts[0])
 			if err == nil {
@@ -158,12 +162,12 @@ func main() {
 		}
 		
 		// Join the remaining arguments as the command
-		cmdToRun = strings.Join(args, " ")
+		cmdToRun = strings.Join(args[1:], " ")
 	} else if *command != "" {
 		// Command flag is provided
 		cmdToRun = *command
 		// Try to infer binary from command
-		cmdParts := strings.Fields(cmdToRun)
+		cmdParts = strings.Fields(cmdToRun)
 		if len(cmdParts) > 0 {
 			inferredBinary, err := exec.LookPath(cmdParts[0])
 			if err == nil {
@@ -177,25 +181,52 @@ func main() {
 		printUsageAndExit()
 	}
 	
+	// Check for multiple commands with && and add their binaries
+	if strings.Contains(cmdToRun, "&&") {
+		commands := strings.Split(cmdToRun, "&&")
+		fmt.Printf("Found multiple commands: %d\n", len(commands))
+		
+		for i, cmd := range commands {
+			cmd = strings.TrimSpace(cmd)
+			if cmd == "" {
+				continue
+			}
+			
+			cmdParts = strings.Fields(cmd)
+			if len(cmdParts) > 0 {
+				binCmd := cmdParts[0]
+				inferredBinary, err := exec.LookPath(binCmd)
+				if err == nil {
+					fmt.Printf("Inferred additional binary from command part %d: %s\n", i+1, inferredBinary)
+					if !contains(binariesToCopy, inferredBinary) {
+						binariesToCopy = append(binariesToCopy, inferredBinary)
+					}
+				} else {
+					fmt.Printf("Warning: Could not find binary '%s' in PATH for command part %d. Will rely on remote system having it installed.\n", binCmd, i+1)
+				}
+			}
+		}
+	}
+	
 	// Find files to copy
-	cmdParts := strings.Fields(cmdToRun)
-	for _, part := range cmdParts {
+	cmdParts = strings.Fields(cmdToRun)
+	for i, part := range cmdParts {
 		// Skip the binary and any flags
-		if strings.HasPrefix(part, "-") || (len(cmdParts) > 0 && part == cmdParts[0]) {
+		if strings.HasPrefix(part, "-") || (i == 0) {
 			continue
 		}
 		
+		// Remove any quotes
+		part = strings.Trim(part, "'\"")
+		
 		// Check if this part looks like a file path
-		if strings.Contains(part, ".") && !strings.HasPrefix(part, "-") {
-			// Remove any quotes
-			part = strings.Trim(part, "'\"")
-			
-			// Check if the file exists
-			if _, err := os.Stat(part); err == nil {
-				// It's a file, add it to the list
-				absPath, err := filepath.Abs(part)
-				if err == nil {
+		if (!strings.HasPrefix(part, "-") && fileExists(part)) || (strings.Contains(part, ".") && !strings.HasPrefix(part, "-") && fileExists(part)) {
+			// It's a file, add it to the list
+			absPath, err := filepath.Abs(part)
+			if err == nil {
+				if !contains(filesToCopy, absPath) {
 					filesToCopy = append(filesToCopy, absPath)
+					fmt.Printf("Found file in command: %s\n", absPath)
 				}
 			}
 		}
@@ -206,8 +237,62 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create temporary folder: %v", err)
 	}
+	
+	fullTempFolder, err := filepath.Abs(tmpFolder)
+	if err != nil {
+		log.Fatalf("Failed to get absolute path for temporary folder: %v", err)
+	}
 
 	// Copy files to temporary folder
+	remappedPaths := make(map[string]string)
+	
+	// First copy all detected binaries
+	for _, binary := range binariesToCopy {
+		// Skip if already in filesToCopy
+		if contains(filesToCopy, binary) {
+			continue
+		}
+		
+		// Get the binary name
+		binaryName := filepath.Base(binary)
+		
+		// Create the destination path in the temp folder
+		destPath := filepath.Join(tmpFolder, binaryName)
+		
+		// Copy the binary
+		err = copyFile(binary, destPath)
+		if err != nil {
+			fmt.Printf("Warning: Failed to copy binary %s: %v\n", binary, err)
+		} else {
+			fmt.Printf("Copied binary: %s to %s\n", binary, destPath)
+			remappedPaths[binary] = binaryName
+		}
+	}
+	
+	// Now copy individual files identified from the command
+	for _, file := range filesToCopy {
+		// Get the file's directory
+		fileName := filepath.Base(file)
+		
+		// Create the destination path in the temp folder
+		destPath := filepath.Join(tmpFolder, fileName)
+		
+		// Skip if already copied as a binary
+		if _, exists := remappedPaths[file]; exists {
+			continue
+		}
+		
+		// Copy the file
+		err = copyFile(file, destPath)
+		if err != nil {
+			fmt.Printf("Warning: Failed to copy file %s: %v\n", file, err)
+		} else {
+			fmt.Printf("Copied file: %s to %s\n", file, destPath)
+			remappedPaths[file] = fileName
+		}
+	}
+	
+	// Copy folder if specified
 	if *folderPath != "" {
 		// Convert to absolute path if needed
 		absPath := *folderPath
@@ -229,64 +314,23 @@ func main() {
 		}
 		
 		fmt.Printf("Copying folder %s to benchmark environment...\n", absPath)
-		err = copyDir(absPath, tmpFolder)
+		
+		// Preserve the folder structure by creating a subfolder with the same name
+		folderName := filepath.Base(absPath)
+		folderDestPath := filepath.Join(tmpFolder, folderName)
+		err = os.MkdirAll(folderDestPath, 0755)
+		if err != nil {
+			log.Fatalf("Failed to create directory %s: %v", folderDestPath, err)
+		}
+		
+		fmt.Printf("Copying %s to %s\n", folderName, folderDestPath)
+		err = copyDir(absPath, folderDestPath)
 		if err != nil {
 			log.Fatalf("Failed to copy folder: %v", err)
 		}
 		
 		// Adjust the command to use the correct paths in the remote environment
-		cmdParts := strings.Fields(cmdToRun)
-		if len(cmdParts) > 0 {
-			// Keep the binary name the same
-			newCmd := []string{cmdParts[0]}
-			
-			// Adjust paths for other arguments
-			for i := 1; i < len(cmdParts); i++ {
-				part := cmdParts[i]
-				if strings.HasPrefix(part, *folderPath) {
-					// If the path starts with the folder path, replace it with the relative path
-					relPath, err := filepath.Rel(*folderPath, part)
-					if err == nil {
-						newCmd = append(newCmd, relPath)
-						continue
-					}
-				}
-				newCmd = append(newCmd, part)
-			}
-			
-			cmdToRun = strings.Join(newCmd, " ")
-		}
-	} else {
-		// Copy binary if it exists
-		if binaryPath != "" {
-			binaryFullPath := filepath.Join(tmpFolder, filepath.Base(binaryPath))
-			err = copyFile(binaryPath, binaryFullPath)
-			if err != nil {
-				log.Fatalf("Failed to copy binary: %v", err)
-			}
-		}
-		
-		// Process each file to copy
-		remappedPaths := make(map[string]string)
-		for _, file := range filesToCopy {
-			// Get the file's directory
-			fileName := filepath.Base(file)
-			
-			// Create the destination path in the temp folder
-			destPath := filepath.Join(tmpFolder, fileName)
-			
-			// Copy the file
-			err = copyFile(file, destPath)
-			if err != nil {
-				log.Printf("Warning: Failed to copy file %s: %v", file, err)
-			} else {
-				fmt.Printf("Copied file: %s to %s\n", file, destPath)
-				remappedPaths[file] = fileName
-			}
-		}
-		
-		// Adjust the command to use the correct paths in the remote environment
-		cmdParts := strings.Fields(cmdToRun)
+		cmdParts = strings.Fields(cmdToRun)
 		if len(cmdParts) > 0 {
 			// Keep the binary name the same
 			newCmd := []string{cmdParts[0]}
@@ -297,11 +341,22 @@ func main() {
 				// Remove any quotes
 				part = strings.Trim(part, "'\"")
 				
+				if strings.HasPrefix(part, *folderPath) {
+					// If the path starts with the folder path, replace it with the relative path
+					relPath, err := filepath.Rel(*folderPath, part)
+					if err == nil {
+						// Include the folder name in the path to maintain the structure
+						newPath := filepath.Join(folderName, relPath)
+						newCmd = append(newCmd, newPath)
+						continue
+					}
+				}
+				
 				// Check if this is a file path we've copied
-				absPath, err := filepath.Abs(part)
-				if err == nil && remappedPaths[absPath] != "" {
+				absFilePath, err := filepath.Abs(part)
+				if err == nil && remappedPaths[absFilePath] != "" {
 					// Replace with just the file name
-					newCmd = append(newCmd, remappedPaths[absPath])
+					newCmd = append(newCmd, remappedPaths[absFilePath])
 				} else {
 					// Keep as is
 					newCmd = append(newCmd, part)
@@ -312,11 +367,32 @@ func main() {
 			fmt.Printf("Adjusted command for remote environment: %s\n", cmdToRun)
 		}
 	}
-
-	fullTempFolder, err := filepath.Abs(tmpFolder)
-	if err != nil {
-		log.Fatalf("Failed to resolve temporary folder: %v", err)
-		os.Exit(1)
+	
+	// Adjust the command to use the correct paths in the remote environment
+	cmdParts = strings.Fields(cmdToRun)
+	if len(cmdParts) > 0 {
+		// Keep the binary name the same
+		newCmd := []string{cmdParts[0]}
+		
+		// Adjust paths for other arguments
+		for i := 1; i < len(cmdParts); i++ {
+			part := cmdParts[i]
+			// Remove any quotes
+			part = strings.Trim(part, "'\"")
+			
+			// Check if this is a file path we've copied
+			absPath, err := filepath.Abs(part)
+			if err == nil && remappedPaths[absPath] != "" {
+				// Replace with just the file name
+				newCmd = append(newCmd, remappedPaths[absPath])
+			} else {
+				// Keep as is
+				newCmd = append(newCmd, part)
+			}
+		}
+		
+		cmdToRun = strings.Join(newCmd, " ")
+		fmt.Printf("Adjusted command for remote environment: %s\n", cmdToRun)
 	}
 
 	// Run on existing machine if specified
@@ -451,15 +527,35 @@ echo "BENCHMARK_END"
 
 	// TODO: add schedule to destroy feature
 	fmt.Println("Destroying provisioned machine...")
-	err = terraform.Destroy(context.Background(), tfexec.Var("benchmark_folder=" + fullTempFolder),
+	
+	// Create a context with timeout for the destroy operation
+	destroyCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	
+	// Capture stderr/stdout for debugging
+	destroyBuffer := &bytes.Buffer{}
+	terraform.SetStdout(destroyBuffer)
+	terraform.SetStderr(destroyBuffer)
+	
+	// Run destroy with timeout context
+	destroyErr := terraform.Destroy(destroyCtx, tfexec.Var("benchmark_folder=" + fullTempFolder),
 		tfexec.Var("instance_type=" + *instanceType))
-	if err != nil {
-		fmt.Printf("Error running terraform destroy: %s.\n"+
-			"⚠️  Although, an error ocurred while running terraform destroy, resources might have been created! Ensure to run:\n"+
-			"cd %s && terraform destroy\n", err, terraformDir)
-		os.Exit(1)
+	
+	if destroyErr != nil {
+		if errors.Is(destroyErr, context.DeadlineExceeded) {
+			fmt.Printf("Terraform destroy timed out after 3 minutes. Resources may still exist.\n")
+			fmt.Printf("⚠️  Terraform destroy operation timed out. Resources might still exist! Manually destroy with:\n"+
+				"cd %s && terraform destroy\n", terraformDir)
+		} else {
+			fmt.Printf("Error running terraform destroy: %s.\n"+
+				"⚠️  Although, an error occurred while running terraform destroy, resources might have been created! Ensure to run:\n"+
+				"cd %s && terraform destroy\n", destroyErr, terraformDir)
+		}
+		
+		// We continue execution to clean up local resources even if destroy failed
+	} else {
+		fmt.Println("Terraform destroy completed successfully.")
 	}
-	fmt.Println("Terraform destroy completed successfully.")
 
 	err = os.RemoveAll(fullTempFolder)
 	if err != nil {
@@ -476,6 +572,24 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// Helper function to check if a file exists
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir()
+}
+
+// Helper function to check if a directory exists
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return info.IsDir()
 }
 
 func printUsageAndExit() {
