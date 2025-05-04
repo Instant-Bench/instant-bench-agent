@@ -15,31 +15,71 @@ Installing ib-agent-cli to /usr/local/bin...
 
 ## CLI
 
-Currently, this agent supports only CLI commands through a Go script. Therefore, having Go installed is required.
+The CLI supports running benchmarks either on a newly provisioned AWS instance or on an existing machine via SSH.
 
-The CLI requires two positional arguments or two arguments (--command & --binary):
+### Basic Usage
 
-* `$BINARY` - The binary to execute the entry point of your benchmark. For example, if you wish to benchmark a custom version of Node.js, provide the binary path like `./node` or simply `node` if using an official version available in `$PATH`.
-* `$ENTRYPOINT` - The benchmark script.
+You can use the CLI in two ways:
 
-```console
-$ ib-agent-cli node ./bench.js
-```
+1. With a command directly as a positional argument:
+   ```console
+   $ ib-agent-cli 'node ./bench.js'
+   ```
 
-or
+2. With the `--command` flag:
+   ```console
+   $ ib-agent-cli --command='node bench.js'
+   ```
 
-```console
-$ ib-agent-cli --command='node bench.js' --binary='./bench.js'
-```
+The tool will automatically infer the binary from the command (in this case, `node`). If it can't find the binary in your PATH, it will rely on the remote system having it installed.
 
-This command performs the following steps:
+### Running on a New AWS Instance
+
+By default, the command performs the following steps:
 
 1. Creates four resources on AWS (KeyPair, TLSPrivateKey, SecurityGroup, EC2).
-2. Executes the provided `$BINARY $ENTRYPOINT`.
+2. Executes the provided command.
 3. Pipes the output to the console.
 4. Destroys the created resources.
 
 **Note:** In case of failures, remember to execute `terraform destroy` inside the `aws` folder.
+
+### Running on an Existing Machine
+
+You can run the benchmark on an existing machine by providing the `--host` parameter:
+
+```console
+$ ib-agent-cli --host=192.168.1.100 --ssh-key=~/.ssh/id_rsa --command='node bench.js'
+```
+
+This will:
+1. Copy the specified files to the remote machine
+2. Execute the command on the remote machine
+3. Pipe the output back to your console
+
+### Copying a Directory with Dependencies
+
+To copy an entire directory with all your dependencies, use the `--folder` flag:
+
+```console
+$ ib-agent-cli --folder=./my-project --command='node index.js'
+```
+
+This will recursively copy the entire directory to the benchmark environment, preserving the directory structure.
+
+### Available Options
+
+```
+Usage: ib-agent-cli [options] [COMMAND] | [--command="custom command"]
+
+Options:
+  --host=IP               Run on existing machine with this IP address
+  --ssh-key=PATH          Path to SSH private key for connecting to existing machine
+  --ssh-user=USERNAME     SSH username for connecting to existing machine (default: ubuntu)
+  --folder=PATH           Path to folder containing all dependencies to be copied
+  --command=COMMAND       Custom command to run on the instance
+  --instance-type=TYPE    AWS instance type to use (default: t2.micro)
+```
 
 ## AWS Setup
 
