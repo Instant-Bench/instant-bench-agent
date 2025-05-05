@@ -1,8 +1,6 @@
 module ib-agent-cli
 
-go 1.23.0
-
-toolchain go1.24.1
+go 1.23
 
 require (
 	github.com/briandowns/spinner v1.23.2
@@ -27,3 +25,5 @@ require (
 	golang.org/x/term v0.29.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 )
+
+replace golang.org/x/crypto => golang.org/x/crypto v0.21.0
