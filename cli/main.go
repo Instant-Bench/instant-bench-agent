@@ -14,11 +14,65 @@ import (
 	"strings"
 	"time"
 
+	"github.com/briandowns/spinner"
+	"github.com/fatih/color"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hc-install/product"
 	"github.com/hashicorp/hc-install/releases"
 	"github.com/hashicorp/terraform-exec/tfexec"
 )
+
+var debugMode bool
+var spinnerInstance *spinner.Spinner
+
+// Logger provides methods for printing debug and info messages
+func debugLog(format string, args ...interface{}) {
+	if debugMode {
+		if spinnerInstance != nil && spinnerInstance.Active() {
+			spinnerInstance.Stop()
+			defer spinnerInstance.Start()
+		}
+		color.Cyan("[DEBUG] "+format, args...)
+	}
+}
+
+func infoLog(format string, args ...interface{}) {
+	if spinnerInstance != nil && spinnerInstance.Active() {
+		spinnerInstance.Stop()
+		defer spinnerInstance.Start()
+	}
+	color.Blue(format, args...)
+}
+
+func errorLog(format string, args ...interface{}) {
+	if spinnerInstance != nil && spinnerInstance.Active() {
+		spinnerInstance.Stop()
+	}
+	color.Red("❌ "+format, args...)
+}
+
+func successLog(format string, args ...interface{}) {
+	if spinnerInstance != nil && spinnerInstance.Active() {
+		spinnerInstance.Stop()
+	}
+	color.Green("✓ "+format, args...)
+}
+
+func startSpinner(message string) {
+	if spinnerInstance != nil {
+		spinnerInstance.Stop()
+	}
+	spinnerInstance = spinner.New(spinner.CharSets[14], 100*time.Millisecond)
+	spinnerInstance.Suffix = " " + message
+	spinnerInstance.Color("blue")
+	spinnerInstance.Start()
+}
+
+func stopSpinner() {
+	if spinnerInstance != nil && spinnerInstance.Active() {
+		spinnerInstance.Stop()
+	}
+}
 
 func filterOutput(output []byte) []byte {
 	lines := bytes.Split(output, []byte("\n"))
@@ -128,7 +182,10 @@ func main() {
 	folderPath := flag.String("folder", "", "Path to folder containing all dependencies to be copied")
 	command := flag.String("command", "", "Custom command to run on the instance")
 	instanceType := flag.String("instance-type", "t2.micro", "AWS instance type to use")
+	debug := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
+
+	debugMode = *debug
 
 	args := flag.Args()
 	var binaryPath string
@@ -184,7 +241,7 @@ func main() {
 	// Check for multiple commands with && and add their binaries
 	if strings.Contains(cmdToRun, "&&") {
 		commands := strings.Split(cmdToRun, "&&")
-		fmt.Printf("Found multiple commands: %d\n", len(commands))
+		debugLog("Found %d commands in compound statement", len(commands))
 		
 		for i, cmd := range commands {
 			cmd = strings.TrimSpace(cmd)
@@ -197,12 +254,12 @@ func main() {
 				binCmd := cmdParts[0]
 				inferredBinary, err := exec.LookPath(binCmd)
 				if err == nil {
-					fmt.Printf("Inferred additional binary from command part %d: %s\n", i+1, inferredBinary)
+					debugLog("Inferred additional binary from command part %d: %s", i+1, inferredBinary)
 					if !contains(binariesToCopy, inferredBinary) {
 						binariesToCopy = append(binariesToCopy, inferredBinary)
 					}
 				} else {
-					fmt.Printf("Warning: Could not find binary '%s' in PATH for command part %d. Will rely on remote system having it installed.\n", binCmd, i+1)
+					debugLog("Could not find binary '%s' in PATH for command part %d", binCmd, i+1)
 				}
 			}
 		}
@@ -233,7 +290,7 @@ func main() {
 	}
 	
 	tmpFolder, err := os.MkdirTemp(".", ".ib-")
-	fmt.Printf("Created benchmark folder %s\n", tmpFolder)
+	debugLog("Created temporary folder %s", tmpFolder)
 	if err != nil {
 		log.Fatalf("Failed to create temporary folder: %v", err)
 	}
@@ -262,9 +319,9 @@ func main() {
 		// Copy the binary
 		err = copyFile(binary, destPath)
 		if err != nil {
-			fmt.Printf("Warning: Failed to copy binary %s: %v\n", binary, err)
+			debugLog("Warning: Failed to copy binary %s: %v", binary, err)
 		} else {
-			fmt.Printf("Copied binary: %s to %s\n", binary, destPath)
+			debugLog("Copied binary: %s to %s", binary, destPath)
 			remappedPaths[binary] = binaryName
 		}
 	}
@@ -285,9 +342,9 @@ func main() {
 		// Copy the file
 		err = copyFile(file, destPath)
 		if err != nil {
-			fmt.Printf("Warning: Failed to copy file %s: %v\n", file, err)
+			debugLog("Warning: Failed to copy file %s: %v", file, err)
 		} else {
-			fmt.Printf("Copied file: %s to %s\n", file, destPath)
+			debugLog("Copied file: %s to %s", file, destPath)
 			remappedPaths[file] = fileName
 		}
 	}
@@ -320,14 +377,18 @@ func main() {
 		folderDestPath := filepath.Join(tmpFolder, folderName)
 		err = os.MkdirAll(folderDestPath, 0755)
 		if err != nil {
-			log.Fatalf("Failed to create directory %s: %v", folderDestPath, err)
+			errorLog("Failed to create directory %s: %v", folderDestPath, err)
+			os.Exit(1)
 		}
 		
-		fmt.Printf("Copying %s to %s\n", folderName, folderDestPath)
+		startSpinner("Copying " + folderName + " files...")
 		err = copyDir(absPath, folderDestPath)
+		stopSpinner()
 		if err != nil {
-			log.Fatalf("Failed to copy folder: %v", err)
+			errorLog("Failed to copy folder: %v", err)
+			os.Exit(1)
 		}
+		successLog("Folder %s copied successfully", folderName)
 		
 		// Adjust the command to use the correct paths in the remote environment
 		cmdParts = strings.Fields(cmdToRun)
@@ -364,46 +425,49 @@ func main() {
 			}
 			
 			cmdToRun = strings.Join(newCmd, " ")
-			fmt.Printf("Adjusted command for remote environment: %s\n", cmdToRun)
+			debugLog("Adjusted command for remote environment: %s", cmdToRun)
 		}
 	}
 	
-	// Adjust the command to use the correct paths in the remote environment
-	cmdParts = strings.Fields(cmdToRun)
-	if len(cmdParts) > 0 {
-		// Keep the binary name the same
-		newCmd := []string{cmdParts[0]}
-		
-		// Adjust paths for other arguments
-		for i := 1; i < len(cmdParts); i++ {
-			part := cmdParts[i]
-			// Remove any quotes
-			part = strings.Trim(part, "'\"")
-			
-			// Check if this is a file path we've copied
-			absPath, err := filepath.Abs(part)
-			if err == nil && remappedPaths[absPath] != "" {
-				// Replace with just the file name
-				newCmd = append(newCmd, remappedPaths[absPath])
-			} else {
-				// Keep as is
-				newCmd = append(newCmd, part)
-			}
-		}
-		
-		cmdToRun = strings.Join(newCmd, " ")
-		fmt.Printf("Adjusted command for remote environment: %s\n", cmdToRun)
-	}
-
 	// Run on existing machine if specified
 	if *useExistingMachine != "" {
-		fmt.Printf("Running benchmark on existing machine: %s\n", *useExistingMachine)
+		infoLog("Running benchmark on existing machine: %s", *useExistingMachine)
 		
 		// Validate SSH key if provided
 		if *sshKeyPath != "" {
 			if _, err := os.Stat(*sshKeyPath); os.IsNotExist(err) {
 				log.Fatalf("SSH key file not found: %s", *sshKeyPath)
 			}
+		}
+		
+		// Create benchmark directory on remote machine
+		var sshKeyOption string
+		if *sshKeyPath != "" {
+			sshKeyOption = "-i " + *sshKeyPath
+		}
+		
+		createDirCmd := exec.Command("ssh", strings.Split(sshKeyOption+" "+*sshUser+"@"+*useExistingMachine+" mkdir -p /home/"+*sshUser+"/benchmark", " ")...)
+		startSpinner("Preparing remote environment...")
+		createDirCmd.Stdout = os.Stdout
+		createDirCmd.Stderr = os.Stderr
+		err = createDirCmd.Run()
+		stopSpinner()
+		if err != nil {
+			errorLog("Failed to create benchmark directory on remote machine: %v", err)
+			os.Exit(1)
+		}
+		
+		// Copy files to remote machine
+		scpCmd := exec.Command("scp", append(strings.Split(sshKeyOption+" -r ", " "), 
+			tmpFolder+"/*", *sshUser+"@"+*useExistingMachine+":/home/"+*sshUser+"/benchmark/")...)
+		startSpinner("Copying files to remote machine...")
+		scpCmd.Stdout = os.Stdout
+		scpCmd.Stderr = os.Stderr
+		err = scpCmd.Run()
+		stopSpinner()
+		if err != nil {
+			errorLog("Failed to copy files to remote machine: %v", err)
+			os.Exit(1)
 		}
 		
 		// Create a temporary script to run on the remote machine
@@ -424,44 +488,23 @@ echo "BENCHMARK_END"
 			log.Fatalf("Failed to create benchmark script: %v", err)
 		}
 		
-		// Copy files to remote machine
-		sshKeyOption := ""
-		if *sshKeyPath != "" {
-			sshKeyOption = "-i " + *sshKeyPath
-		}
-		
-		// Create benchmark directory on remote machine
-		createDirCmd := exec.Command("ssh", strings.Split(sshKeyOption+" "+*sshUser+"@"+*useExistingMachine+" mkdir -p /home/"+*sshUser+"/benchmark", " ")...)
-		createDirCmd.Stdout = os.Stdout
-		createDirCmd.Stderr = os.Stderr
-		err = createDirCmd.Run()
-		if err != nil {
-			log.Fatalf("Failed to create benchmark directory on remote machine: %v", err)
-		}
-		
-		// Copy files to remote machine
-		scpCmd := exec.Command("scp", append(strings.Split(sshKeyOption+" -r ", " "), 
-			fullTempFolder+"/*", *sshUser+"@"+*useExistingMachine+":/home/"+*sshUser+"/benchmark/")...)
-		scpCmd.Stdout = os.Stdout
-		scpCmd.Stderr = os.Stderr
-		err = scpCmd.Run()
-		if err != nil {
-			log.Fatalf("Failed to copy files to remote machine: %v", err)
-		}
-		
 		// Run benchmark script on remote machine
+		infoLog("Running benchmark...")
 		sshCmd := exec.Command("ssh", strings.Split(sshKeyOption+" "+*sshUser+"@"+*useExistingMachine+" bash /home/"+*sshUser+"/benchmark/run_benchmark.sh", " ")...)
 		output, err := sshCmd.CombinedOutput()
 		if err != nil {
-			log.Fatalf("Failed to run benchmark on remote machine: %v\nOutput: %s", err, output)
+			errorLog("Failed to run benchmark on remote machine: %v\nOutput: %s", err, output)
+			os.Exit(1)
 		}
 		
 		fmt.Println(string(filterOutput(output)))
+		successLog("Benchmark completed successfully")
 		
 		// Clean up temporary folder
-		err = os.RemoveAll(fullTempFolder)
+		debugLog("Cleaning up temporary folder %s", tmpFolder)
+		err = os.RemoveAll(tmpFolder)
 		if err != nil {
-			fmt.Printf("An error ocurred when removing the temporary folder: %s. Error: %s", fullTempFolder, err)
+			debugLog("Warning: Failed to remove temporary folder: %s. Error: %s", tmpFolder, err)
 		}
 		
 		return
@@ -470,6 +513,7 @@ echo "BENCHMARK_END"
 	// Otherwise, use Terraform to provision a new machine
 	terraformDir := getTerraformDir()
 
+	startSpinner("Initializing Terraform...")
 	installer := &releases.ExactVersion{
 		Product: product.Terraform,
 		Version: version.Must(version.NewVersion("1.7.5")),
@@ -477,33 +521,54 @@ echo "BENCHMARK_END"
 
 	execPath, err := installer.Install(context.Background())
 	if err != nil {
-		log.Fatalf("error installing Terraform: %s", err)
+		stopSpinner()
+		errorLog("Failed to install Terraform: %s", err)
+		os.Exit(1)
 	}
 
 	// Initialize a new tfexec.Terraform object
 	terraform, err := tfexec.NewTerraform(terraformDir, execPath)
 	if err != nil {
-		fmt.Printf("Error initializing Terraform: %s\n", err)
+		stopSpinner()
+		errorLog("Failed to initialize Terraform: %s", err)
 		os.Exit(1)
 	}
+	stopSpinner()
 
-	err = terraform.Init(context.Background(), tfexec.Upgrade(true))
+	debugLog("Initializing Terraform in %s", terraformDir)
+	startSpinner("Initializing Terraform providers...")
+	// Initialize with options compatible with Terraform 1.7.5
+	err = terraform.Init(context.Background(), 
+		tfexec.Upgrade(true),
+		tfexec.ForceCopy(true),
+	)
+	stopSpinner()
 	if err != nil {
-		log.Fatalf("error running Init: %s", err)
-		os.Exit(1)
+		errorLog("Failed to initialize Terraform: %s", err)
+		infoLog("Attempting to initialize with alternative options...")
+		
+		// Try again with minimal options
+		startSpinner("Reinitializing Terraform...")
+		err = terraform.Init(context.Background(), tfexec.Upgrade(true))
+		stopSpinner()
+		if err != nil {
+			errorLog("Failed to initialize Terraform: %s", err)
+			fmt.Println("\nTo fix this manually, try running: cd", terraformDir, "&& terraform init -upgrade")
+			os.Exit(1)
+		}
 	}
+	successLog("Terraform initialized successfully")
 
-	_, err = terraform.Show(context.Background())
-	if err != nil {
-		log.Fatalf("error running Show: %s", err)
-		os.Exit(1)
-	}
+	// Skip show command which may not work properly before apply
+	// _, err = terraform.Show(context.Background())
+	// if err != nil && !strings.Contains(err.Error(), "state snapshot was created") {
+	//	errorLog("Failed to run Terraform show: %s", err)
+	//	os.Exit(1)
+	// }
 
 	buffer := &bytes.Buffer{}
 	terraform.SetStdout(buffer)
 	terraform.SetStderr(buffer)
-	// terraform.SetStdout(os.Stdout)
-	// terraform.SetStderr(os.Stderr)
 
 	applyVars := []tfexec.ApplyOption{
 		tfexec.Var("benchmark_folder=" + fullTempFolder),
@@ -513,24 +578,28 @@ echo "BENCHMARK_END"
 	// Set the command to run
 	applyVars = append(applyVars, tfexec.Var("custom_command=echo \"Remote-Output: $("+cmdToRun+")\""))
 	
-	fmt.Println("Provisioning machine...")
+	startSpinner("Provisioning machine...")
 	// Run 'terraform apply' in the given directory
 	err = terraform.Apply(context.Background(), applyVars...)
+	stopSpinner()
 	if err != nil {
-		fmt.Printf("Error running terraform apply: %s.\n"+
-			"⚠️  Although, an error ocurred while running terraform apply, resources might have been created! Ensure to run:\n"+
+		errorLog("Error running terraform apply: %s.\n"+
+			"⚠️  Although, an error occurred while running terraform apply, resources might have been created! Ensure to run:\n"+
 			"cd %s && terraform destroy\n", err, terraformDir)
 		os.Exit(1)
 	}
+	successLog("Machine provisioned successfully")
 	fmt.Println(string(filterOutput(buffer.Bytes())))
-	fmt.Println("Terraform apply completed successfully.")
+	debugLog("Terraform apply completed successfully")
 
 	// TODO: add schedule to destroy feature
-	fmt.Println("Destroying provisioned machine...")
+	infoLog("Destroying provisioned machine...")
 	
 	// Create a context with timeout for the destroy operation
 	destroyCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
+	
+	startSpinner("Running terraform destroy (timeout: 3 minutes)...")
 	
 	// Capture stderr/stdout for debugging
 	destroyBuffer := &bytes.Buffer{}
@@ -540,28 +609,37 @@ echo "BENCHMARK_END"
 	// Run destroy with timeout context
 	destroyErr := terraform.Destroy(destroyCtx, tfexec.Var("benchmark_folder=" + fullTempFolder),
 		tfexec.Var("instance_type=" + *instanceType))
+	stopSpinner()
 	
 	if destroyErr != nil {
 		if errors.Is(destroyErr, context.DeadlineExceeded) {
-			fmt.Printf("Terraform destroy timed out after 3 minutes. Resources may still exist.\n")
+			errorLog("Terraform destroy timed out after 3 minutes. Resources may still exist.")
 			fmt.Printf("⚠️  Terraform destroy operation timed out. Resources might still exist! Manually destroy with:\n"+
 				"cd %s && terraform destroy\n", terraformDir)
 		} else {
-			fmt.Printf("Error running terraform destroy: %s.\n"+
-				"⚠️  Although, an error occurred while running terraform destroy, resources might have been created! Ensure to run:\n"+
-				"cd %s && terraform destroy\n", destroyErr, terraformDir)
+			errorLog("Error running terraform destroy: %s", destroyErr)
+			fmt.Printf("⚠️  Although, an error occurred while running terraform destroy, resources might have been created! Ensure to run:\n"+
+				"cd %s && terraform destroy\n", terraformDir)
+		}
+		
+		// Output buffer content to help diagnose the issue
+		if debugMode {
+			fmt.Println("Debug output from terraform destroy:")
+			fmt.Println(destroyBuffer.String())
 		}
 		
 		// We continue execution to clean up local resources even if destroy failed
 	} else {
-		fmt.Println("Terraform destroy completed successfully.")
+		successLog("Terraform resources destroyed successfully")
 	}
 
+	debugLog("Cleaning up temporary folder %s", fullTempFolder)
 	err = os.RemoveAll(fullTempFolder)
 	if err != nil {
-		fmt.Printf("An error ocurred when removing the temporary folder: %s. Error: %s", fullTempFolder, err)
+		errorLog("Failed to remove the temporary folder: %s. Error: %s", fullTempFolder, err)
 		os.Exit(1)
 	}
+	successLog("Benchmark completed successfully")
 }
 
 // Helper function to check if a slice contains a string
@@ -601,6 +679,7 @@ func printUsageAndExit() {
 	fmt.Println("  --folder=PATH           Path to folder containing all dependencies to be copied")
 	fmt.Println("  --command=COMMAND       Custom command to run on the instance")
 	fmt.Println("  --instance-type=TYPE    AWS instance type to use (default: t2.micro)")
+	fmt.Println("  --debug                 Enable debug logging")
 	os.Exit(1)
 }
 
