@@ -182,10 +182,41 @@ func main() {
 	folderPath := flag.String("folder", "", "Path to folder containing all dependencies to be copied")
 	command := flag.String("command", "", "Custom command to run on the instance")
 	instanceType := flag.String("instance-type", "t2.micro", "AWS instance type to use")
+	cloud := flag.String("cloud", "aws", "Cloud provider to use: aws or hetzner")
+	serverType := flag.String("server-type", "cax11", "Hetzner server type to use (for --cloud=hetzner)")
+	location := flag.String("location", "fsn1", "Hetzner location to use (for --cloud=hetzner)")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
 
 	debugMode = *debug
+
+    desiredDir := "aws"
+    switch strings.ToLower(*cloud) {
+    case "hetzner":
+        desiredDir = "hetzner"
+    case "aws":
+        desiredDir = "aws"
+    default:
+        errorLog("Unsupported cloud provider: %s. Use 'aws' or 'hetzner'", *cloud)
+        os.Exit(1)
+    }
+
+    basePath := terraformPath
+    if basePath == "" {
+        basePath = ".." 
+    }
+    absBase, err := filepath.Abs(basePath)
+    if err == nil {
+        // If the current base points to .../aws or .../hetzner, use its parent as repo base
+        last := filepath.Base(absBase)
+        if last == "aws" || last == "hetzner" {
+            absBase = filepath.Dir(absBase)
+        }
+        terraformPath = filepath.Join(absBase, desiredDir)
+    } else {
+        terraformPath = filepath.Join("..", desiredDir)
+    }
+    debugLog("Selected cloud provider: %s. Terraform dir set to %s", desiredDir, terraformPath)
 
 	args := flag.Args()
 	var binaryPath string
@@ -572,7 +603,17 @@ echo "BENCHMARK_END"
 
 	applyVars := []tfexec.ApplyOption{
 		tfexec.Var("benchmark_folder=" + fullTempFolder),
-		tfexec.Var("instance_type=" + *instanceType),
+	}
+
+	// Provider-specific variables
+	if strings.ToLower(*cloud) == "aws" {
+		applyVars = append(applyVars, tfexec.Var("instance_type="+*instanceType))
+	} else if strings.ToLower(*cloud) == "hetzner" {
+		applyVars = append(applyVars,
+			tfexec.Var("server_type="+*serverType),
+			tfexec.Var("location="+*location),
+		)
+		// Note: Hetzner provider requires HCLOUD_TOKEN env var set externally.
 	}
 	
 	// Set the command to run
@@ -595,11 +636,15 @@ echo "BENCHMARK_END"
 	// TODO: add schedule to destroy feature
 	infoLog("Destroying provisioned machine...")
 	
-	// Create a context with timeout for the destroy operation
-	destroyCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	
-	startSpinner("Running terraform destroy (timeout: 3 minutes)...")
+	// Create a context with timeout for the destroy operation (longer for Hetzner)
+    destroyTimeout := 3 * time.Minute
+    if strings.ToLower(*cloud) == "hetzner" {
+        destroyTimeout = 10 * time.Minute
+    }
+    destroyCtx, cancel := context.WithTimeout(context.Background(), destroyTimeout)
+    defer cancel()
+
+    startSpinner(fmt.Sprintf("Running terraform destroy (timeout: %v)...", destroyTimeout))
 	
 	// Capture stderr/stdout for debugging
 	destroyBuffer := &bytes.Buffer{}
@@ -607,8 +652,17 @@ echo "BENCHMARK_END"
 	terraform.SetStderr(destroyBuffer)
 	
 	// Run destroy with timeout context
-	destroyErr := terraform.Destroy(destroyCtx, tfexec.Var("benchmark_folder=" + fullTempFolder),
-		tfexec.Var("instance_type=" + *instanceType))
+	// Build destroy vars matching apply
+	destroyVars := []tfexec.DestroyOption{tfexec.Var("benchmark_folder=" + fullTempFolder)}
+	if strings.ToLower(*cloud) == "aws" {
+		destroyVars = append(destroyVars, tfexec.Var("instance_type="+*instanceType))
+	} else if strings.ToLower(*cloud) == "hetzner" {
+		destroyVars = append(destroyVars,
+			tfexec.Var("server_type="+*serverType),
+			tfexec.Var("location="+*location),
+		)
+	}
+	destroyErr := terraform.Destroy(destroyCtx, destroyVars...)
 	stopSpinner()
 	
 	if destroyErr != nil {
@@ -671,30 +725,37 @@ func dirExists(path string) bool {
 }
 
 func printUsageAndExit() {
-	fmt.Println("Usage: ib-agent-cli [options] [COMMAND] | [--command=\"custom command\"]")
-	fmt.Println("\nOptions:")
-	fmt.Println("  --host=IP               Run on existing machine with this IP address")
-	fmt.Println("  --ssh-key=PATH          Path to SSH private key for connecting to existing machine")
-	fmt.Println("  --ssh-user=USERNAME     SSH username for connecting to existing machine (default: ubuntu)")
-	fmt.Println("  --folder=PATH           Path to folder containing all dependencies to be copied")
-	fmt.Println("  --command=COMMAND       Custom command to run on the instance")
-	fmt.Println("  --instance-type=TYPE    AWS instance type to use (default: t2.micro)")
-	fmt.Println("  --debug                 Enable debug logging")
-	os.Exit(1)
+    fmt.Println("Usage: ib-agent-cli [options] [COMMAND] | (--command=\"custom command\")")
+    fmt.Println("\nOptions:")
+    fmt.Println("  --host=IP               Run on existing machine with this IP address")
+    fmt.Println("  --ssh-key=PATH          Path to SSH private key for connecting to existing machine")
+    fmt.Println("  --ssh-user=USERNAME     SSH username for connecting to existing machine (default: ubuntu)")
+    fmt.Println("  --folder=PATH           Path to folder containing all dependencies to be copied")
+    fmt.Println("  --command=COMMAND       Custom command to run on the instance")
+    fmt.Println("  --instance-type=TYPE    AWS instance type to use (default: t2.micro)")
+    fmt.Println("  --cloud=PROVIDER        Cloud provider to use: aws or hetzner (default: aws)")
+    fmt.Println("  --server-type=TYPE      Hetzner server type (for --cloud=hetzner, default: cax11)")
+    fmt.Println("  --location=LOC          Hetzner location (for --cloud=hetzner, default: fsn1)")
+    fmt.Println("  --debug                 Enable debug logging")
+    fmt.Println("\nHetzner examples:")
+    fmt.Println("  export HCLOUD_TOKEN=\"<your_hcloud_api_token>\"")
+    fmt.Println("  ib-agent-cli --cloud=hetzner --server-type=cax11 --location=fsn1 --command='node script.js'")
+    fmt.Println("  ib-agent-cli --cloud=hetzner --folder=./deps --command='pwd && ls && node script.js'")
+    os.Exit(1)
 }
 
 func copyFile(src, dst string) error {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer srcFile.Close()
+    srcFile, err := os.Open(src)
+    if err != nil {
+        return err
+    }
+    defer srcFile.Close()
 
-	dstFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
+    dstFile, err := os.Create(dst)
+    if err != nil {
+        return err
+    }
+    defer dstFile.Close()
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err
