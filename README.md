@@ -15,7 +15,7 @@ Installing ib-agent-cli to /usr/local/bin...
 
 ## CLI
 
-The CLI supports running benchmarks either on a newly provisioned AWS instance or on an existing machine via SSH.
+The CLI supports running benchmarks either on a newly provisioned cloud instance (AWS or Hetzner Cloud) or on an existing machine via SSH.
 
 ### Basic Usage
 
@@ -42,7 +42,39 @@ By default, the command performs the following steps:
 3. Pipes the output to the console.
 4. Destroys the created resources.
 
-**Note:** In case of failures, remember to execute `terraform destroy` inside the `aws` folder.
+**Note:** In case of failures, remember to execute `terraform destroy` inside the `aws/` folder.
+
+### Running on a New Hetzner Cloud Instance
+
+1. Set your Hetzner Cloud API token in the environment (the Terraform provider reads `HCLOUD_TOKEN`):
+
+   ```bash
+   export HCLOUD_TOKEN="<your_hcloud_api_token>"
+   ```
+
+2. Run your command on Hetzner Cloud, specifying server type and location:
+
+   ```console
+   $ ib-agent-cli \
+     --cloud=hetzner \
+     --server-type=cax11 \
+     --location=fsn1 \
+     --command='node bench.js'
+   ```
+
+3. Copy a project folder and use compound commands:
+
+   ```console
+   $ ib-agent-cli --cloud=hetzner --folder=./my-project \
+     --command='pwd && ls && node index.js'
+   ```
+
+By default, the remote environment installs NVM and Node v22. If you need a different Node version, include it in your command, for example:
+
+```console
+$ ib-agent-cli --cloud=hetzner \
+  --command='. ~/.nvm/nvm.sh && nvm install 24 && nvm use 24 && node bench.js'
+```
 
 ### Running on an Existing Machine
 
@@ -70,7 +102,7 @@ This will recursively copy the entire directory to the benchmark environment, pr
 ### Available Options
 
 ```
-Usage: ib-agent-cli [options] [COMMAND] | [--command="custom command"]
+Usage: ib-agent-cli [options] [COMMAND] | (--command="custom command")
 
 Options:
   --host=IP               Run on existing machine with this IP address
@@ -79,9 +111,15 @@ Options:
   --folder=PATH           Path to folder containing all dependencies to be copied
   --command=COMMAND       Custom command to run on the instance
   --instance-type=TYPE    AWS instance type to use (default: t2.micro)
+  --cloud=PROVIDER        Cloud provider to use: aws or hetzner (default: aws)
+  --server-type=TYPE      Hetzner server type (for --cloud=hetzner, default: cax11)
+  --location=LOC          Hetzner location (for --cloud=hetzner, default: fsn1)
+  --debug                 Enable debug logging
 ```
 
-## AWS Setup
+## Cloud Setup
+
+### AWS
 
 Before using the Instant Bench Agent with AWS, set up AWS CLI and configure your AWS credentials:
 
@@ -91,3 +129,20 @@ $ aws configure
 ```
 
 > Ensure you are using an IAM role with sufficient permissions to create and destroy EC2 instances.
+
+### Hetzner Cloud
+
+Export your Hetzner Cloud API token before using `--cloud=hetzner`:
+
+```bash
+export HCLOUD_TOKEN="<your_hcloud_api_token>"
+```
+
+## Behavior and Notes
+
+- **Auto file detection**: The CLI scans your command for referenced files and copies them to the remote environment. Use `--folder` to copy an entire project.
+- **Compound commands**: Commands joined with `&&` are supported; binaries from each part are handled.
+- **Destruction**: Resources are destroyed automatically after running. For manual cleanup or on errors:
+  - AWS: `cd aws && terraform destroy`
+  - Hetzner: `cd hetzner && terraform destroy`
+- **Debugging**: Use `--debug` to see detailed logs and remote output around `BENCHMARK_START/BENCHMARK_END`.
