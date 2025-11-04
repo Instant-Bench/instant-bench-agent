@@ -25,6 +25,21 @@ import (
 var debugMode bool
 var spinnerInstance *spinner.Spinner
 
+// foldersFlag is a custom flag type that supports multiple values
+type foldersFlag []string
+
+func (f *foldersFlag) String() string {
+	if f == nil {
+		return ""
+	}
+	return strings.Join(*f, ",")
+}
+
+func (f *foldersFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
 // Logger provides methods for printing debug and info messages
 func debugLog(format string, args ...interface{}) {
 	if debugMode {
@@ -127,8 +142,18 @@ func getTerraformDir() string {
     return absolutePath
 }
 
+// buildIgnoreMap creates a map of directories to ignore
+func buildIgnoreMap(ignoreDirs []string) map[string]bool {
+	ignoreMap := make(map[string]bool)
+	for _, dir := range ignoreDirs {
+		ignoreMap[dir] = true
+	}
+	return ignoreMap
+}
+
 // copyDir recursively copies a directory tree, attempting to preserve permissions.
-func copyDir(src, dst string) error {
+// It skips directories specified in the ignoreDirs map.
+func copyDir(src, dst string, ignoreDirs map[string]bool) error {
 	// Get properties of source dir
 	srcInfo, err := os.Stat(src)
 	if err != nil {
@@ -153,12 +178,18 @@ func copyDir(src, dst string) error {
 	}
 
 	for _, entry := range entries {
+		// Skip ignored directories
+		if entry.IsDir() && ignoreDirs[entry.Name()] {
+			debugLog("Skipping ignored directory: %s", entry.Name())
+			continue
+		}
+
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 
 		if entry.IsDir() {
 			// Recursive call for directories
-			err = copyDir(srcPath, dstPath)
+			err = copyDir(srcPath, dstPath, ignoreDirs)
 			if err != nil {
 				return err
 			}
@@ -179,16 +210,37 @@ func main() {
 	useExistingMachine := flag.String("host", "", "IP address of an existing machine to run the benchmark on")
 	sshKeyPath := flag.String("ssh-key", "", "Path to SSH private key for connecting to existing machine")
 	sshUser := flag.String("ssh-user", "ubuntu", "SSH username for connecting to existing machine")
-	folderPath := flag.String("folder", "", "Path to folder containing all dependencies to be copied")
+	var folderPaths foldersFlag
+	flag.Var(&folderPaths, "folder", "Path to folder containing all dependencies to be copied (can be specified multiple times)")
+	var ignoreDirs foldersFlag
+	flag.Var(&ignoreDirs, "ignore", "Directory names to ignore when copying folders (e.g., node_modules, .git). Can be specified multiple times.")
 	command := flag.String("command", "", "Custom command to run on the instance")
 	instanceType := flag.String("instance-type", "t2.micro", "AWS instance type to use")
 	cloud := flag.String("cloud", "aws", "Cloud provider to use: aws or hetzner")
 	serverType := flag.String("server-type", "cax11", "Hetzner server type to use (for --cloud=hetzner)")
 	location := flag.String("location", "fsn1", "Hetzner location to use (for --cloud=hetzner)")
+	highTier := flag.Bool("high-tier", false, "Use high-performance server types (Hetzner: ccx33, AWS: c5.2xlarge)")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
 
 	debugMode = *debug
+
+	// Set up ignore list for folder copying
+	ignoreDirsMap := buildIgnoreMap(ignoreDirs)
+	if len(ignoreDirs) > 0 {
+		debugLog("Ignoring directories: %v", ignoreDirs)
+	}
+
+	// Override server/instance types if high-tier flag is set
+	if *highTier {
+		if strings.ToLower(*cloud) == "hetzner" {
+			*serverType = "ccx33"
+			debugLog("High-tier mode enabled: using Hetzner server type %s (8 dedicated vCPUs, 32GB RAM)", *serverType)
+		} else if strings.ToLower(*cloud) == "aws" {
+			*instanceType = "c5.2xlarge"
+			debugLog("High-tier mode enabled: using AWS instance type %s (8 vCPUs, 16GB RAM)", *instanceType)
+		}
+	}
 
     desiredDir := "aws"
     switch strings.ToLower(*cloud) {
@@ -380,46 +432,52 @@ func main() {
 		}
 	}
 	
-	// Copy folder if specified
-	if *folderPath != "" {
-		// Convert to absolute path if needed
-		absPath := *folderPath
-		if !filepath.IsAbs(absPath) {
-			cwd, err := os.Getwd()
-			if err != nil {
-				log.Fatalf("Failed to get working directory: %v", err)
+	// Copy folders if specified
+	if len(folderPaths) > 0 {
+		for _, folderPath := range folderPaths {
+			// Convert to absolute path if needed
+			absPath := folderPath
+			if !filepath.IsAbs(absPath) {
+				cwd, err := os.Getwd()
+				if err != nil {
+					log.Fatalf("Failed to get working directory: %v", err)
+				}
+				absPath = filepath.Join(cwd, absPath)
 			}
-			absPath = filepath.Join(cwd, absPath)
+			
+			// Verify the folder exists
+			info, err := os.Stat(absPath)
+			if err != nil {
+				log.Fatalf("Failed to access folder %s: %v", absPath, err)
+			}
+			if !info.IsDir() {
+				log.Fatalf("%s is not a directory", absPath)
+			}
+			
+			folderName := filepath.Base(absPath)
+			if len(folderPaths) > 1 {
+				infoLog("Copying folder %s to benchmark environment...", folderName)
+			} else {
+				fmt.Printf("Copying folder %s to benchmark environment...\n", absPath)
+			}
+			
+			// Preserve the folder structure by creating a subfolder with the same name
+			folderDestPath := filepath.Join(tmpFolder, folderName)
+			err = os.MkdirAll(folderDestPath, 0755)
+			if err != nil {
+				errorLog("Failed to create directory %s: %v", folderDestPath, err)
+				os.Exit(1)
+			}
+			
+			startSpinner("Copying " + folderName + " files...")
+			err = copyDir(absPath, folderDestPath, ignoreDirsMap)
+			stopSpinner()
+			if err != nil {
+				errorLog("Failed to copy folder: %v", err)
+				os.Exit(1)
+			}
+			successLog("Folder %s copied successfully", folderName)
 		}
-		
-		// Verify the folder exists
-		info, err := os.Stat(absPath)
-		if err != nil {
-			log.Fatalf("Failed to access folder %s: %v", absPath, err)
-		}
-		if !info.IsDir() {
-			log.Fatalf("%s is not a directory", absPath)
-		}
-		
-		fmt.Printf("Copying folder %s to benchmark environment...\n", absPath)
-		
-		// Preserve the folder structure by creating a subfolder with the same name
-		folderName := filepath.Base(absPath)
-		folderDestPath := filepath.Join(tmpFolder, folderName)
-		err = os.MkdirAll(folderDestPath, 0755)
-		if err != nil {
-			errorLog("Failed to create directory %s: %v", folderDestPath, err)
-			os.Exit(1)
-		}
-		
-		startSpinner("Copying " + folderName + " files...")
-		err = copyDir(absPath, folderDestPath)
-		stopSpinner()
-		if err != nil {
-			errorLog("Failed to copy folder: %v", err)
-			os.Exit(1)
-		}
-		successLog("Folder %s copied successfully", folderName)
 		
 		// Adjust the command to use the correct paths in the remote environment
 		cmdParts = strings.Fields(cmdToRun)
@@ -433,25 +491,33 @@ func main() {
 				// Remove any quotes
 				part = strings.Trim(part, "'\"")
 				
-				if strings.HasPrefix(part, *folderPath) {
-					// If the path starts with the folder path, replace it with the relative path
-					relPath, err := filepath.Rel(*folderPath, part)
-					if err == nil {
-						// Include the folder name in the path to maintain the structure
-						newPath := filepath.Join(folderName, relPath)
-						newCmd = append(newCmd, newPath)
-						continue
+				// Check if this part matches any of the folder paths
+				matched := false
+				for _, folderPath := range folderPaths {
+					if strings.HasPrefix(part, folderPath) {
+						// If the path starts with the folder path, replace it with the relative path
+						relPath, err := filepath.Rel(folderPath, part)
+						if err == nil {
+							// Include the folder name in the path to maintain the structure
+							folderName := filepath.Base(folderPath)
+							newPath := filepath.Join(folderName, relPath)
+							newCmd = append(newCmd, newPath)
+							matched = true
+							break
+						}
 					}
 				}
 				
-				// Check if this is a file path we've copied
-				absFilePath, err := filepath.Abs(part)
-				if err == nil && remappedPaths[absFilePath] != "" {
-					// Replace with just the file name
-					newCmd = append(newCmd, remappedPaths[absFilePath])
-				} else {
-					// Keep as is
-					newCmd = append(newCmd, part)
+				if !matched {
+					// Check if this is a file path we've copied
+					absFilePath, err := filepath.Abs(part)
+					if err == nil && remappedPaths[absFilePath] != "" {
+						// Replace with just the file name
+						newCmd = append(newCmd, remappedPaths[absFilePath])
+					} else {
+						// Keep as is
+						newCmd = append(newCmd, part)
+					}
 				}
 			}
 			
@@ -504,14 +570,13 @@ func main() {
 		// Create a temporary script to run on the remote machine
 		scriptPath := filepath.Join(tmpFolder, "run_benchmark.sh")
 		scriptContent := `#!/bin/bash
-cd /home/` + *sshUser + `/benchmark
 echo "BENCHMARK_START"
 echo "Run 1"
-` + cmdToRun + `
+(cd /home/` + *sshUser + `/benchmark && ` + cmdToRun + `)
 echo "Run 2"
-` + cmdToRun + `
+(cd /home/` + *sshUser + `/benchmark && ` + cmdToRun + `)
 echo "Run 3"
-` + cmdToRun + `
+(cd /home/` + *sshUser + `/benchmark && ` + cmdToRun + `)
 echo "BENCHMARK_END"
 `
 		err = os.WriteFile(scriptPath, []byte(scriptContent), 0755)
@@ -730,12 +795,14 @@ func printUsageAndExit() {
     fmt.Println("  --host=IP               Run on existing machine with this IP address")
     fmt.Println("  --ssh-key=PATH          Path to SSH private key for connecting to existing machine")
     fmt.Println("  --ssh-user=USERNAME     SSH username for connecting to existing machine (default: ubuntu)")
-    fmt.Println("  --folder=PATH           Path to folder containing all dependencies to be copied")
+    fmt.Println("  --folder=PATH           Path to folder containing all dependencies to be copied (can be specified multiple times)")
+    fmt.Println("  --ignore=DIR            Directory name to ignore when copying folders (e.g., node_modules, .git). Can be specified multiple times.")
     fmt.Println("  --command=COMMAND       Custom command to run on the instance")
     fmt.Println("  --instance-type=TYPE    AWS instance type to use (default: t2.micro)")
     fmt.Println("  --cloud=PROVIDER        Cloud provider to use: aws or hetzner (default: aws)")
     fmt.Println("  --server-type=TYPE      Hetzner server type (for --cloud=hetzner, default: cax11)")
     fmt.Println("  --location=LOC          Hetzner location (for --cloud=hetzner, default: fsn1)")
+    fmt.Println("  --high-tier             Use high-performance server types (Hetzner: ccx33, AWS: c5.2xlarge)")
     fmt.Println("  --debug                 Enable debug logging")
     fmt.Println("\nHetzner examples:")
     fmt.Println("  export HCLOUD_TOKEN=\"<your_hcloud_api_token>\"")
